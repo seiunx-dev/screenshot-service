@@ -29,19 +29,20 @@ Use `docker compose up -d --build` for a full local container smoke test, then c
 
 ## Architecture
 
-Four modules under `src/` — keep the responsibilities separated:
+Five modules under `src/` — keep the responsibilities separated:
 
-- `main.rs` — Axum router, body-size limit, tracing init, graceful shutdown. `process_screenshot` is the shared post-validation pipeline that calls `take_screenshot`, then attaches `Content-Type` / `Content-Length` / `Content-Disposition` / `Cache-Control` headers to the raw image bytes.
+- `main.rs` — Axum router, 8 MiB body-size limit, `PORT` binding (default `8080`), startup banner, graceful shutdown (Ctrl+C / SIGTERM). `process_screenshot` is the shared post-validation pipeline that calls `take_screenshot`, then attaches `Content-Type` / `Content-Length` / `Content-Disposition` / `Cache-Control` headers to the raw image bytes.
 - `request.rs` — `ScreenshotRequest` (POST JSON shape) and `ScreenshotQuery` (GET shape, where `headers` and `clip` arrive as JSON-encoded strings and are parsed into the request). All defaulting and clamping lives in `apply_defaults`; bounds checks live in `validate`. Both run in `process_screenshot` before any browser work.
-- `screenshot.rs` — Chromium lifecycle. Each request launches a fresh `Browser` with a per-request `tempfile` user-data dir, spawns a handler task to drain CDP events, then runs `capture_page` under a `tokio::time::timeout` derived from `req.timeout`. Browser, page and handler are torn down on all paths (errors only logged at debug). Three capture modes: full-page (re-overrides device metrics to the layout content size, capped at 16384px, uses `capture_beyond_viewport`), `clip`, or plain viewport. `wait_for` polls `find_element` + `bounding_box` every 100 ms until the element is visible or the request timeout elapses.
+- `screenshot.rs` — Chromium lifecycle. Each request launches a fresh `Browser` with a per-request `tempfile` user-data dir, spawns a handler task to drain CDP events, then runs `capture_page` under a `tokio::time::timeout` derived from `req.timeout`. Browser and handler are torn down on all paths; the page is closed explicitly unless the request timed out, in which case closing the browser takes it down (teardown errors are only logged at debug). Three capture modes: full-page (re-overrides device metrics to the layout content size, height capped at 16384px, uses `capture_beyond_viewport`), `clip`, or plain viewport. `wait_for` polls `find_element` + `bounding_box` every 100 ms until the element is visible or the request timeout elapses.
 - `error.rs` — `AppError::BadRequest` → 400, `AppError::Screenshot` → 500. Always return the `{"error": "..."}` JSON shape.
+- `logging.rs` — tracing init (`logging::init`, called first in `main`). Uses `RUST_LOG` when set, otherwise `screenshot_service=info,tower_http=info,warn`, and formats events with a custom colored `[time][LEVEL][component]` formatter (component = module name, `http` for `tower_http`).
 
 ## Conventions
 
 - Preserve the existing HTTP contract documented in `README.md`.
 - Keep the service compatible with the pinned Docker Rust toolchain.
 - Do not reintroduce Go files, `go.mod`, or `go.sum`. The repo was rewritten from Go; the old files are deleted in the working tree but still visible in `git log`.
-- Keep abstractions small — the four-module layout is intentional.
+- Keep abstractions small — the five-module layout is intentional.
 - Image bytes flow through `axum::body::Body` directly; do not buffer them through additional copies.
 - Keep generated artifacts out of git: `target/`, `.idea/`, local screenshots, and logs.
 - Prefer small, focused changes over broad rewrites.
@@ -100,7 +101,7 @@ Use the standardized workflow layout in `.github/workflows`:
 Workflow maintenance rules:
 
 - Keep workflow filenames and top-level names aligned: `CI`, `Release`, `Docker`, and optional package-specific names.
-- Use `actions/checkout@v6`, `actions/setup-go@v6`, `actions/upload-artifact@v7`, `actions/download-artifact@v8`, `softprops/action-gh-release@v3`, and current Docker actions (`setup-buildx@v4`, `login@v4`, `metadata@v6`, `build-push@v7`).
+- Use `actions/checkout@v6`, `dtolnay/rust-toolchain@stable`, `Swatinem/rust-cache@v2`, `actions/upload-artifact@v7`, `actions/download-artifact@v8`, `softprops/action-gh-release@v3`, and current Docker actions (`setup-buildx@v4`, `login@v4`, `metadata@v6`, `build-push@v7`).
 - Keep `permissions` minimal: `contents: read` for CI/Docker build-only work, `contents: write` for release publishing, and `packages: write` only when pushing container images.
 - Use workflow `concurrency` keyed by workflow name and ref, with release jobs using `release-${{ github.ref_name }}` and `cancel-in-progress: false`.
 - Do not reintroduce legacy workflow names such as `rust-ci.yml`, `build.yml`, `release-build.yml`, `docker-build.yml`, or `docker-release.yml` unless a package-specific workflow already exists and is intentionally preserved.
