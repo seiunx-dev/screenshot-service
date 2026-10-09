@@ -105,3 +105,12 @@ Workflow maintenance rules:
 - Keep `permissions` minimal: `contents: read` for CI/Docker build-only work, `contents: write` for release publishing, and `packages: write` only when pushing container images.
 - Use workflow `concurrency` keyed by workflow name and ref, with release jobs using `release-${{ github.ref_name }}` and `cancel-in-progress: false`.
 - Do not reintroduce legacy workflow names such as `rust-ci.yml`, `build.yml`, `release-build.yml`, `docker-build.yml`, or `docker-release.yml` unless a package-specific workflow already exists and is intentionally preserved.
+
+## Release notes
+
+Release notes follow the org standard: [RELEASE_NOTES.md](https://github.com/seiunx-dev/ci-templates/blob/main/RELEASE_NOTES.md). Write them in English.
+
+- Title every release with the tag only, for example `v2.0.1`.
+- Publish tags with an `-alpha`, `-beta` or `-rc` suffix as pre-releases; every other tag is a regular release, and every tag gets a release.
+- Omit empty sections, and end every item with its PR number `(#123)`, or the short commit SHA when there is no PR.
+- `release.yml` publishes the release with auto-generated notes; once it has finished, rewrite those notes to the standard.
